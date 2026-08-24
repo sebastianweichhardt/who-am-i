@@ -1,5 +1,7 @@
-import { ComponentProps } from "react";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ComponentProps } from "react";
+
+import { supabase } from "@/lib/supabase";
 
 export type ThemeIcon = ComponentProps<typeof MaterialCommunityIcons>["name"];
 
@@ -13,165 +15,56 @@ export type GameTheme = {
   prompts: string[];
 };
 
-export const THEMES: GameTheme[] = [
-  {
-    id: "movie-icons",
-    title: "Movie Icons",
-    description: "Stars and characters from the big screen",
-    icon: "movie-open-star-outline",
-    color: "#FF775F",
-    accent: "#FFD9D2",
-    prompts: [
-      "Harry Potter",
-      "Barbie",
-      "Indiana Jones",
-      "Shrek",
-      "Wednesday Addams",
-      "Spider-Man",
-      "Forrest Gump",
-      "Darth Vader",
-      "The Joker",
-      "Rocky Balboa",
-      "Wonder Woman",
-      "Willy Wonka",
-      "James Bond",
-      "Marty McFly",
-      "Katniss Everdeen",
-      "Jack Sparrow",
-    ],
-  },
-  {
-    id: "superstars",
-    title: "Superstars",
-    description: "Famous faces from music, sport and TV",
-    icon: "star-four-points-outline",
-    color: "#B58BFF",
-    accent: "#E9DDFF",
-    prompts: [
-      "Taylor Swift",
-      "Lionel Messi",
-      "Beyoncé",
-      "Dwayne Johnson",
-      "Adele",
-      "Cristiano Ronaldo",
-      "Lady Gaga",
-      "LeBron James",
-      "Rihanna",
-      "Gordon Ramsay",
-      "Serena Williams",
-      "Ed Sheeran",
-      "Zendaya",
-      "Usain Bolt",
-      "Billie Eilish",
-      "David Beckham",
-    ],
-  },
-  {
-    id: "history-makers",
-    title: "History Makers",
-    description: "Great minds, leaders and trailblazers",
-    icon: "bank-outline",
-    color: "#F5C451",
-    accent: "#FFF0C3",
-    prompts: [
-      "Albert Einstein",
-      "Cleopatra",
-      "Leonardo da Vinci",
-      "Marie Curie",
-      "Napoleon",
-      "Frida Kahlo",
-      "William Shakespeare",
-      "Amelia Earhart",
-      "Nelson Mandela",
-      "Joan of Arc",
-      "Isaac Newton",
-      "Rosa Parks",
-      "Wolfgang Mozart",
-      "Martin Luther King Jr.",
-      "Vincent van Gogh",
-      "Florence Nightingale",
-    ],
-  },
-  {
-    id: "wild-animals",
-    title: "Wild Animals",
-    description: "From tiny critters to jungle giants",
-    icon: "paw-outline",
-    color: "#47C8A3",
-    accent: "#CDF5E9",
-    prompts: [
-      "Giraffe",
-      "Penguin",
-      "Kangaroo",
-      "Octopus",
-      "Chameleon",
-      "Gorilla",
-      "Flamingo",
-      "Crocodile",
-      "Sloth",
-      "Dolphin",
-      "Peacock",
-      "Hippopotamus",
-      "Meerkat",
-      "Polar Bear",
-      "Rhinoceros",
-      "Red Panda",
-    ],
-  },
-  {
-    id: "food-drink",
-    title: "Food & Drink",
-    description: "Delicious dishes and tasty treats",
-    icon: "silverware-fork-knife",
-    color: "#FF9C50",
-    accent: "#FFE2C9",
-    prompts: [
-      "Pizza",
-      "Sushi",
-      "Ice Cream",
-      "Tacos",
-      "Croissant",
-      "Spaghetti",
-      "Popcorn",
-      "Pancakes",
-      "Cheeseburger",
-      "Watermelon",
-      "Hot Chocolate",
-      "Pretzel",
-      "Cupcake",
-      "French Fries",
-      "Avocado Toast",
-      "Apple Pie",
-    ],
-  },
-  {
-    id: "anything-goes",
-    title: "Anything Goes",
-    description: "A wild mix of people, places and things",
-    icon: "creation-outline",
-    color: "#59B7F8",
-    accent: "#D4EDFF",
-    prompts: [
-      "The Eiffel Tower",
-      "A Firefighter",
-      "TikTok",
-      "The Moon",
-      "A Roller Coaster",
-      "Sherlock Holmes",
-      "A Birthday Cake",
-      "Mount Everest",
-      "A Pirate",
-      "The Internet",
-      "A Snowman",
-      "A Magician",
-      "The Olympics",
-      "A Robot",
-      "A Superhero",
-      "A Time Machine",
-    ],
-  },
-];
+let themeCache: GameTheme[] | null = null;
 
-export function getTheme(id: string | undefined) {
-  return THEMES.find((theme) => theme.id === id) ?? THEMES[0];
+export async function fetchThemes(forceRefresh = false): Promise<GameTheme[]> {
+  if (!forceRefresh && themeCache) return themeCache;
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured. Add the project URL and publishable key to .env.local.",
+    );
+  }
+
+  const [themesResponse, promptsResponse] = await Promise.all([
+    supabase
+      .from("themes")
+      .select("id, title, description, icon, color, accent, sort_order")
+      .eq("is_active", true)
+      .order("sort_order"),
+    supabase
+      .from("theme_prompts")
+      .select("theme_id, prompt, sort_order")
+      .order("sort_order"),
+  ]);
+
+  if (themesResponse.error) throw themesResponse.error;
+  if (promptsResponse.error) throw promptsResponse.error;
+
+  const promptsByTheme = new Map<string, string[]>();
+  for (const row of promptsResponse.data) {
+    const prompts = promptsByTheme.get(row.theme_id) ?? [];
+    prompts.push(row.prompt);
+    promptsByTheme.set(row.theme_id, prompts);
+  }
+
+  themeCache = themesResponse.data.map((row) => ({
+    accent: row.accent,
+    color: row.color,
+    description: row.description,
+    icon: row.icon as ThemeIcon,
+    id: row.id,
+    prompts: promptsByTheme.get(row.id) ?? [],
+    title: row.title,
+  }));
+
+  return themeCache;
+}
+
+export async function fetchTheme(id: string): Promise<GameTheme | null> {
+  const themes = await fetchThemes();
+  return themes.find((theme) => theme.id === id) ?? null;
+}
+
+export function clearThemeCache() {
+  themeCache = null;
 }

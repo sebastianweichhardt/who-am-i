@@ -2,21 +2,60 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import type { Href } from "expo-router";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import type { GuessResult } from "@/app/game";
+import ThemeLoadState from "@/components/theme-load-state";
 import { palette } from "@/constants/palette";
-import { getTheme } from "@/data/themes";
+import { fetchTheme, type GameTheme } from "@/data/themes";
 
 export default function ResultsScreen() {
   const params = useLocalSearchParams<{ results?: string; theme?: string }>();
   const router = useRouter();
-  const theme = getTheme(params.theme);
+  const [theme, setTheme] = useState<GameTheme | null>(null);
+  const [themeError, setThemeError] = useState<string | null>(null);
   const results = useMemo(() => parseResults(params.results), [params.results]);
   const correct = results.filter((result) => result.correct);
   const passed = results.filter((result) => !result.correct);
+
+  const loadTheme = useCallback(async () => {
+    setTheme(null);
+    setThemeError(null);
+
+    if (!params.theme) {
+      setThemeError("The round does not include a theme.");
+      return;
+    }
+
+    try {
+      const nextTheme = await fetchTheme(params.theme);
+      if (!nextTheme) {
+        setThemeError("This theme is unavailable or no longer active.");
+        return;
+      }
+      setTheme(nextTheme);
+    } catch (error) {
+      setThemeError(
+        error instanceof Error ? error.message : "Unable to load this theme.",
+      );
+    }
+  }, [params.theme]);
+
+  useEffect(() => {
+    void loadTheme();
+  }, [loadTheme]);
+
+  if (!theme) {
+    return (
+      <ThemeLoadState
+        errorMessage={themeError}
+        onBack={() => router.replace("/")}
+        onRetry={() => void loadTheme()}
+      />
+    );
+  }
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safeArea}>

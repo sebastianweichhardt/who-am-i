@@ -15,8 +15,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import ThemeLoadState from "@/components/theme-load-state";
 import { palette } from "@/constants/palette";
-import { getTheme } from "@/data/themes";
+import { fetchTheme, type GameTheme } from "@/data/themes";
 
 export type GuessResult = {
   prompt: string;
@@ -36,8 +37,9 @@ const ACTION_COOLDOWN_MS = 350;
 export default function GameScreen() {
   const { theme: themeParam } = useLocalSearchParams<{ theme?: string }>();
   const router = useRouter();
-  const theme = getTheme(themeParam);
 
+  const [theme, setTheme] = useState<GameTheme | null>(null);
+  const [themeError, setThemeError] = useState<string | null>(null);
   const [phase, setPhase] = useState<GamePhase>("ready");
   const [countdown, setCountdown] = useState(3);
   const [remaining, setRemaining] = useState(ROUND_SECONDS);
@@ -52,6 +54,37 @@ export default function GameScreen() {
   const armedRef = useRef(true);
   const lastActionRef = useRef(0);
   const subscriptionRef = useRef<ReturnType<typeof DeviceMotion.addListener> | null>(null);
+
+  const loadTheme = useCallback(async () => {
+    setTheme(null);
+    setThemeError(null);
+
+    if (!themeParam) {
+      setThemeError("No theme was selected.");
+      return;
+    }
+
+    try {
+      const nextTheme = await fetchTheme(themeParam);
+      if (!nextTheme) {
+        setThemeError("This theme is unavailable or no longer active.");
+        return;
+      }
+      if (nextTheme.prompts.length === 0) {
+        setThemeError("This theme does not have any prompts yet.");
+        return;
+      }
+      setTheme(nextTheme);
+    } catch (error) {
+      setThemeError(
+        error instanceof Error ? error.message : "Unable to load this theme.",
+      );
+    }
+  }, [themeParam]);
+
+  useEffect(() => {
+    void loadTheme();
+  }, [loadTheme]);
 
   useEffect(() => {
     void ScreenOrientation.lockAsync(
@@ -72,7 +105,7 @@ export default function GameScreen() {
 
   const finishGame = useCallback(
     (finalResults: GuessResult[]) => {
-      if (phaseRef.current === "finished") return;
+      if (!theme || phaseRef.current === "finished") return;
 
       setGamePhase("finished");
       subscriptionRef.current?.remove();
@@ -85,12 +118,12 @@ export default function GameScreen() {
         },
       } as unknown as Href);
     },
-    [router, setGamePhase, theme.id],
+    [router, setGamePhase, theme],
   );
 
   const registerGuess = useCallback(
     (correct: boolean) => {
-      if (phaseRef.current !== "playing") return;
+      if (!theme || phaseRef.current !== "playing") return;
 
       const now = Date.now();
       if (now - lastActionRef.current < ACTION_COOLDOWN_MS) return;
@@ -120,7 +153,7 @@ export default function GameScreen() {
       indexRef.current = nextIndex;
       setCurrentIndex(nextIndex);
     },
-    [finishGame, theme.prompts],
+    [finishGame, theme],
   );
 
   const handleMotion = useCallback(
@@ -240,7 +273,17 @@ export default function GameScreen() {
   );
 
   const score = results.filter((result) => result.correct).length;
-  const currentPrompt = theme.prompts[currentIndex];
+  const currentPrompt = theme?.prompts[currentIndex];
+
+  if (!theme) {
+    return (
+      <ThemeLoadState
+        errorMessage={themeError}
+        onBack={() => router.replace("/")}
+        onRetry={() => void loadTheme()}
+      />
+    );
+  }
 
   if (phase === "ready") {
     return (
