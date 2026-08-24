@@ -40,6 +40,25 @@ Never put a Supabase secret key or legacy `service_role` key in an
 `EXPO_PUBLIC_` variable. The publishable key is intended for client apps; data
 access is enforced by the database policies in the migration.
 
+## Sign in with Apple
+
+The app uses native Sign in with Apple and stores the resulting session in
+Supabase Auth.
+
+1. In Supabase, open Authentication > Providers > Apple and enable the
+   provider.
+2. While testing in Expo Go, add `host.exp.Exponent` to the Apple provider's
+   Client IDs list. Expo Go uses that identifier instead of your future app
+   bundle identifier.
+3. For a standalone iOS build, choose an `ios.bundleIdentifier`, enable Sign in
+   with Apple for the matching App ID in the Apple Developer portal, and add
+   that bundle identifier to Supabase's Client IDs list.
+4. Restart Metro with `npx expo start --clear` and test on a physical iPhone or
+   iPad.
+
+The native-only flow does not require adding an Apple secret to the Expo app.
+Keep Apple signing keys and Supabase secret keys out of the repository.
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)

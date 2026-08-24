@@ -1,3 +1,4 @@
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -16,9 +17,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Card from "@/components/card";
 import { palette } from "@/constants/palette";
 import { fetchThemes, GameTheme } from "@/data/themes";
+import { useAuth } from "@/providers/auth-provider";
 
 export default function Index() {
   const router = useRouter();
+  const { session } = useAuth();
   const [themes, setThemes] = useState<GameTheme[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -58,8 +61,26 @@ export default function Index() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
-          <Text style={styles.eyebrow}>A guessing game</Text>
-          <Text style={styles.title}>Who am I?</Text>
+          <View style={styles.headerTopRow}>
+            <Text style={styles.title}>Who am I?</Text>
+            <Pressable
+              accessibilityLabel={session ? "Open account" : "Sign in"}
+              accessibilityRole="button"
+              hitSlop={10}
+              onPress={() => router.push("/account" as Href)}
+              style={({ pressed }) => [
+                styles.accountButton,
+                session && styles.accountButtonSignedIn,
+                pressed && styles.accountButtonPressed,
+              ]}
+            >
+              <MaterialCommunityIcons
+                color={session ? "#FFFFFF" : palette.ink}
+                name={session ? "account" : "account-outline"}
+                size={20}
+              />
+            </Pressable>
+          </View>
           <Text style={styles.subtitle}>
             Choose a theme. Hold the phone to your forehead. Let your friends give the clues.
           </Text>
@@ -131,13 +152,29 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingBottom: 40,
-    paddingTop: 44,
+    paddingTop: 24,
   },
-  eyebrow: {
-    color: palette.muted,
-    fontSize: 13,
-    fontWeight: "500",
-    marginBottom: 12,
+  headerTopRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  accountButton: {
+    alignItems: "center",
+    borderColor: palette.border,
+    borderRadius: 20,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: "center",
+    width: 40,
+  },
+  accountButtonSignedIn: {
+    backgroundColor: palette.ink,
+    borderColor: palette.ink,
+  },
+  accountButtonPressed: {
+    opacity: 0.72,
+    transform: [{ scale: 0.96 }],
   },
   title: {
     color: palette.ink,
