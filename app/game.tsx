@@ -3,12 +3,11 @@ import * as Haptics from "expo-haptics";
 import * as ScreenOrientation from "expo-screen-orientation";
 import type { Href } from "expo-router";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { DeviceMotion, DeviceMotionMeasurement } from "expo-sensors";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Pressable,
-  Platform,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -25,14 +24,10 @@ export type GuessResult = {
 };
 
 type GamePhase = "ready" | "countdown" | "playing" | "finished";
-type MotionStatus = "idle" | "active" | "denied" | "unavailable";
 
-const ROUND_SECONDS = 60;
-const TILT_THRESHOLD = 0.3;
-const EARLY_TILT_THRESHOLD = 0.16;
-const TILT_RATE_THRESHOLD = 25;
-const NEUTRAL_THRESHOLD = 0.12;
-const ACTION_COOLDOWN_MS = 350;
+const DEFAULT_ROUND_SECONDS = 60;
+const ROUND_OPTIONS = [30, 60, 90] as const;
+const TAP_COOLDOWN_MS = 220;
 
 export default function GameScreen() {
   const { theme: themeParam } = useLocalSearchParams<{ theme?: string }>();
@@ -42,18 +37,15 @@ export default function GameScreen() {
   const [themeError, setThemeError] = useState<string | null>(null);
   const [phase, setPhase] = useState<GamePhase>("ready");
   const [countdown, setCountdown] = useState(3);
-  const [remaining, setRemaining] = useState(ROUND_SECONDS);
+  const [roundSeconds, setRoundSeconds] = useState(DEFAULT_ROUND_SECONDS);
+  const [remaining, setRemaining] = useState(DEFAULT_ROUND_SECONDS);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [results, setResults] = useState<GuessResult[]>([]);
-  const [motionStatus, setMotionStatus] = useState<MotionStatus>("idle");
 
   const phaseRef = useRef<GamePhase>("ready");
   const indexRef = useRef(0);
   const resultsRef = useRef<GuessResult[]>([]);
-  const baselineRef = useRef<number | null>(null);
-  const armedRef = useRef(true);
-  const lastActionRef = useRef(0);
-  const subscriptionRef = useRef<ReturnType<typeof DeviceMotion.addListener> | null>(null);
+  const lastTapAtRef = useRef(0);
 
   const loadTheme = useCallback(async () => {
     setTheme(null);
@@ -88,7 +80,7 @@ export default function GameScreen() {
 
   useEffect(() => {
     void ScreenOrientation.lockAsync(
-      ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT,
+      ScreenOrientation.OrientationLock.PORTRAIT_UP,
     ).catch(() => undefined);
 
     return () => {
@@ -108,15 +100,19 @@ export default function GameScreen() {
       if (!theme || phaseRef.current === "finished") return;
 
       setGamePhase("finished");
-      subscriptionRef.current?.remove();
-      subscriptionRef.current = null;
-      router.replace({
-        pathname: "/results",
-        params: {
-          results: JSON.stringify(finalResults),
-          theme: theme.id,
-        },
-      } as unknown as Href);
+      void ScreenOrientation.lockAsync(
+        ScreenOrientation.OrientationLock.PORTRAIT_UP,
+      )
+        .catch(() => undefined)
+        .finally(() => {
+          router.replace({
+            pathname: "/results",
+            params: {
+              results: JSON.stringify(finalResults),
+              theme: theme.id,
+            },
+          } as unknown as Href);
+        });
     },
     [router, setGamePhase, theme],
   );
@@ -126,9 +122,8 @@ export default function GameScreen() {
       if (!theme || phaseRef.current !== "playing") return;
 
       const now = Date.now();
-      if (now - lastActionRef.current < ACTION_COOLDOWN_MS) return;
-      lastActionRef.current = now;
-      armedRef.current = false;
+      if (now - lastTapAtRef.current < TAP_COOLDOWN_MS) return;
+      lastTapAtRef.current = now;
 
       const guess: GuessResult = {
         correct,
@@ -156,80 +151,16 @@ export default function GameScreen() {
     [finishGame, theme],
   );
 
-  const handleMotion = useCallback(
-    ({ orientation, rotation, rotationRate }: DeviceMotionMeasurement) => {
-      const isLandscape = Math.abs(orientation) === 90;
-      const axis = isLandscape ? rotation?.beta : rotation?.gamma;
-      if (typeof axis !== "number") return;
-
-      if (phaseRef.current === "countdown") {
-        baselineRef.current =
-          baselineRef.current === null
-            ? axis
-            : baselineRef.current * 0.82 + axis * 0.18;
-        return;
-      }
-
-      if (phaseRef.current !== "playing") return;
-      if (baselineRef.current === null) baselineRef.current = axis;
-
-      const rawTilt = axis - (baselineRef.current ?? axis);
-      const direction = orientation === 90 ? -1 : 1;
-      const tilt = rawTilt * direction;
-      const rawRate = isLandscape ? rotationRate?.beta : rotationRate?.gamma;
-      const tiltRate = (rawRate ?? 0) * direction;
-
-      if (!armedRef.current) {
-        if (Math.abs(tilt) < NEUTRAL_THRESHOLD) armedRef.current = true;
-        return;
-      }
-
-      if (Math.abs(tilt) < NEUTRAL_THRESHOLD && baselineRef.current !== null) {
-        baselineRef.current = baselineRef.current * 0.98 + axis * 0.02;
-      }
-
-      const tiltedRight =
-        tilt > TILT_THRESHOLD ||
-        (tilt > EARLY_TILT_THRESHOLD && tiltRate > TILT_RATE_THRESHOLD);
-      const tiltedLeft =
-        tilt < -TILT_THRESHOLD ||
-        (tilt < -EARLY_TILT_THRESHOLD && tiltRate < -TILT_RATE_THRESHOLD);
-
-      if (tiltedRight) registerGuess(true);
-      if (tiltedLeft) registerGuess(false);
-    },
-    [registerGuess],
-  );
-
   const beginCountdown = useCallback(async () => {
     setCountdown(3);
-    setRemaining(ROUND_SECONDS);
-    baselineRef.current = null;
-    armedRef.current = true;
-
-    try {
-      const available = await DeviceMotion.isAvailableAsync();
-      if (!available) {
-        setMotionStatus("unavailable");
-      } else {
-        const permission = await DeviceMotion.requestPermissionsAsync();
-        if (!permission.granted) {
-          setMotionStatus("denied");
-        } else {
-          if (Platform.OS !== "web") {
-            DeviceMotion.setUpdateInterval(Platform.OS === "android" ? 200 : 100);
-          }
-          subscriptionRef.current?.remove();
-          subscriptionRef.current = DeviceMotion.addListener(handleMotion);
-          setMotionStatus("active");
-        }
-      }
-    } catch {
-      setMotionStatus("unavailable");
-    }
+    setRemaining(roundSeconds);
+    lastTapAtRef.current = 0;
 
     setGamePhase("countdown");
-  }, [handleMotion, setGamePhase]);
+    await ScreenOrientation.lockAsync(
+      ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT,
+    ).catch(() => undefined);
+  }, [roundSeconds, setGamePhase]);
 
   useEffect(() => {
     if (phase !== "countdown") return;
@@ -237,7 +168,7 @@ export default function GameScreen() {
     const interval = setInterval(() => {
       setCountdown((value) => {
         if (value <= 1) {
-          lastActionRef.current = 0;
+          lastTapAtRef.current = 0;
           setGamePhase("playing");
           return 0;
         }
@@ -263,14 +194,6 @@ export default function GameScreen() {
 
     return () => clearInterval(interval);
   }, [finishGame, phase]);
-
-  useEffect(
-    () => () => {
-      subscriptionRef.current?.remove();
-      subscriptionRef.current = null;
-    },
-    [],
-  );
 
   const score = results.filter((result) => result.correct).length;
   const currentPrompt = theme?.prompts[currentIndex];
@@ -303,7 +226,10 @@ export default function GameScreen() {
           <View style={styles.headerSpacer} />
         </View>
 
-        <View style={styles.readyContent}>
+        <ScrollView
+          contentContainerStyle={styles.readyContent}
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.readyIntro}>
             <View style={[styles.deckIcon, { backgroundColor: theme.accent }]}>
               <MaterialCommunityIcons color={palette.ink} name={theme.icon} size={28} />
@@ -317,17 +243,50 @@ export default function GameScreen() {
             <View style={styles.instructions}>
               <Instruction
                 color={palette.ink}
-                icon="rotate-3d-variant"
-                label="Tilt right"
-                value="Got it"
+                icon="arrow-left"
+                label="Tap left"
+                value="Incorrect"
               />
               <View style={styles.instructionDivider} />
               <Instruction
                 color={palette.ink}
-                icon="rotate-3d-variant"
-                label="Tilt left"
-                value="Pass"
+                icon="arrow-right"
+                label="Tap right"
+                value="Correct"
               />
+            </View>
+
+            <View style={styles.durationSection}>
+              <Text style={styles.durationLabel}>Round time</Text>
+              <View style={styles.durationOptions}>
+                {ROUND_OPTIONS.map((seconds) => {
+                  const selected = seconds === roundSeconds;
+
+                  return (
+                    <Pressable
+                      accessibilityLabel={`${seconds} seconds`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      key={seconds}
+                      onPress={() => setRoundSeconds(seconds)}
+                      style={({ pressed }) => [
+                        styles.durationOption,
+                        selected && styles.durationOptionSelected,
+                        pressed && styles.durationOptionPressed,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.durationOptionText,
+                          selected && styles.durationOptionTextSelected,
+                        ]}
+                      >
+                        {seconds}s
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
 
             <Pressable
@@ -341,9 +300,9 @@ export default function GameScreen() {
               <Text style={styles.primaryButtonText}>Start round</Text>
               <MaterialCommunityIcons color="#FFFFFF" name="arrow-right" size={20} />
             </Pressable>
-            <Text style={styles.roundMeta}>60 seconds · {theme.prompts.length} prompts</Text>
+            <Text style={styles.roundMeta}>{theme.prompts.length} prompts</Text>
           </View>
-        </View>
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -355,7 +314,7 @@ export default function GameScreen() {
         <View style={styles.countdownContent}>
           <Text style={styles.countdownKicker}>Phone on your forehead</Text>
           <Text style={styles.countdownNumber}>{countdown}</Text>
-          <Text style={styles.countdownLabel}>Get ready!</Text>
+          <Text style={styles.countdownLabel}>Tap either side to answer</Text>
         </View>
       </SafeAreaView>
     );
@@ -418,21 +377,39 @@ export default function GameScreen() {
             </View>
           </View>
 
-          <View style={styles.tiltHints}>
-            <View style={styles.tiltHint}>
-              <MaterialCommunityIcons color={palette.ink} name="arrow-right" size={17} />
-              <Text style={styles.tiltHintText}>Right = correct</Text>
-            </View>
-            <View style={styles.tiltHint}>
+          <View style={styles.tapHints}>
+            <View style={styles.tapHint}>
               <MaterialCommunityIcons color={palette.ink} name="arrow-left" size={17} />
-              <Text style={styles.tiltHintText}>Left = pass</Text>
+              <Text style={styles.tapHintText}>Left = incorrect</Text>
+            </View>
+            <View style={styles.tapHint}>
+              <Text style={styles.tapHintText}>Right = correct</Text>
+              <MaterialCommunityIcons color={palette.ink} name="arrow-right" size={17} />
             </View>
           </View>
-          {motionStatus !== "active" && (
-            <Text style={styles.motionFallback}>
-              Tilt controls unavailable on this device
-            </Text>
-          )}
+        </View>
+
+        <View style={styles.tapZones}>
+          <Pressable
+            accessibilityHint="Marks the current prompt as incorrect"
+            accessibilityLabel="Incorrect"
+            accessibilityRole="button"
+            onPress={() => registerGuess(false)}
+            style={({ pressed }) => [
+              styles.tapZone,
+              pressed && styles.incorrectTapZonePressed,
+            ]}
+          />
+          <Pressable
+            accessibilityHint="Marks the current prompt as correct"
+            accessibilityLabel="Correct"
+            accessibilityRole="button"
+            onPress={() => registerGuess(true)}
+            style={({ pressed }) => [
+              styles.tapZone,
+              pressed && styles.correctTapZonePressed,
+            ]}
+          />
         </View>
       </View>
     </SafeAreaView>
@@ -446,7 +423,7 @@ function Instruction({
   value,
 }: {
   color: string;
-  icon: "rotate-3d-variant";
+  icon: "arrow-left" | "arrow-right";
   label: string;
   value: string;
 }) {
@@ -498,22 +475,22 @@ const styles = StyleSheet.create({
   },
   readyContent: {
     alignItems: "center",
-    flex: 1,
-    flexDirection: "row",
-    gap: 44,
+    flexGrow: 1,
     justifyContent: "center",
-    paddingBottom: 18,
-    paddingHorizontal: 40,
+    paddingBottom: 32,
+    paddingHorizontal: 20,
+    paddingTop: 24,
   },
   readyIntro: {
-    alignItems: "flex-start",
-    flex: 1,
+    alignItems: "center",
     maxWidth: 360,
+    width: "100%",
   },
   readyActions: {
     alignItems: "center",
-    flex: 1,
+    marginTop: 28,
     maxWidth: 440,
+    width: "100%",
   },
   deckIcon: {
     alignItems: "center",
@@ -528,7 +505,7 @@ const styles = StyleSheet.create({
     fontSize: 34,
     fontWeight: "700",
     letterSpacing: -1,
-    textAlign: "left",
+    textAlign: "center",
   },
   readySubtitle: {
     color: palette.muted,
@@ -537,7 +514,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginTop: 12,
     maxWidth: 350,
-    textAlign: "left",
+    textAlign: "center",
   },
   instructions: {
     backgroundColor: palette.surface,
@@ -583,6 +560,45 @@ const styles = StyleSheet.create({
     backgroundColor: palette.border,
     marginHorizontal: 10,
     width: 1,
+  },
+  durationSection: {
+    marginTop: 16,
+    maxWidth: 460,
+    width: "100%",
+  },
+  durationLabel: {
+    color: palette.muted,
+    fontSize: 12,
+    fontWeight: "500",
+    marginBottom: 8,
+  },
+  durationOptions: {
+    backgroundColor: "#E9E8E3",
+    borderRadius: 12,
+    flexDirection: "row",
+    padding: 3,
+  },
+  durationOption: {
+    alignItems: "center",
+    borderRadius: 9,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 42,
+  },
+  durationOptionSelected: {
+    backgroundColor: palette.ink,
+  },
+  durationOptionPressed: {
+    opacity: 0.72,
+  },
+  durationOptionText: {
+    color: palette.muted,
+    fontSize: 14,
+    fontVariant: ["tabular-nums"],
+    fontWeight: "600",
+  },
+  durationOptionTextSelected: {
+    color: "#FFFFFF",
   },
   primaryButton: {
     alignItems: "center",
@@ -699,9 +715,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flex: 1,
     justifyContent: "center",
+    overflow: "hidden",
     paddingBottom: 10,
     paddingHorizontal: 48,
     paddingTop: 4,
+    position: "relative",
   },
   deckLabel: {
     color: palette.muted,
@@ -776,27 +794,39 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "400",
   },
-  tiltHints: {
+  tapHints: {
     flexDirection: "row",
-    gap: 18,
+    justifyContent: "space-between",
     marginTop: 11,
+    maxWidth: 620,
+    width: "100%",
   },
-  tiltHint: {
+  tapHint: {
     alignItems: "center",
     flexDirection: "row",
     gap: 5,
   },
-  tiltHintText: {
+  tapHintText: {
     color: palette.muted,
     fontSize: 12,
     fontWeight: "400",
   },
-  motionFallback: {
-    color: palette.subtle,
-    fontSize: 10,
-    fontWeight: "400",
-    lineHeight: 13,
-    paddingTop: 8,
-    textAlign: "center",
+  tapZones: {
+    bottom: 0,
+    flexDirection: "row",
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    zIndex: 1,
+  },
+  tapZone: {
+    flex: 1,
+  },
+  incorrectTapZonePressed: {
+    backgroundColor: "rgba(196, 77, 64, 0.08)",
+  },
+  correctTapZonePressed: {
+    backgroundColor: "rgba(23, 23, 23, 0.06)",
   },
 });

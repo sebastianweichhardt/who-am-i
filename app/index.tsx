@@ -88,7 +88,6 @@ export default function Index() {
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Choose a theme</Text>
-          <Text style={styles.roundTime}>60 seconds</Text>
         </View>
 
         {isLoading && themes.length === 0 ? (
@@ -132,12 +131,30 @@ export default function Index() {
                 theme={theme}
               />
             ))}
+            <CreateThemePlaceholder />
           </View>
         )}
 
         <Text style={styles.tipText}>Best with two or more players.</Text>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function CreateThemePlaceholder() {
+  return (
+    <View
+      accessibilityLabel="Create your own theme, coming soon"
+      style={styles.createCard}
+    >
+      <View style={styles.createIcon}>
+        <MaterialCommunityIcons color={palette.ink} name="plus" size={23} />
+      </View>
+      <View style={styles.createCopy}>
+        <Text style={styles.createTitle}>Create your own</Text>
+        <Text style={styles.createDescription}>Custom themes coming soon</Text>
+      </View>
+    </View>
   );
 }
 
@@ -192,9 +209,6 @@ const styles = StyleSheet.create({
     maxWidth: 560,
   },
   sectionHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
     marginBottom: 12,
   },
   sectionTitle: {
@@ -202,13 +216,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  roundTime: {
+  grid: {
+    gap: 10,
+  },
+  createCard: {
+    alignItems: "center",
+    borderColor: palette.borderStrong,
+    borderRadius: 16,
+    borderStyle: "dashed",
+    borderWidth: 1,
+    flexDirection: "row",
+    minHeight: 82,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  createIcon: {
+    alignItems: "center",
+    borderColor: palette.border,
+    borderRadius: 12,
+    borderWidth: 1,
+    height: 46,
+    justifyContent: "center",
+    width: 46,
+  },
+  createCopy: {
+    flex: 1,
+    marginLeft: 13,
+  },
+  createTitle: {
+    color: palette.ink,
+    fontSize: 16,
+    fontWeight: "600",
+    letterSpacing: -0.2,
+  },
+  createDescription: {
     color: palette.muted,
     fontSize: 12,
     fontWeight: "400",
-  },
-  grid: {
-    gap: 10,
+    marginTop: 4,
   },
   stateCard: {
     alignItems: "center",

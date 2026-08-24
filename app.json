@@ -23,12 +23,6 @@
       "expo-router",
       "expo-apple-authentication",
       [
-        "expo-sensors",
-        {
-          "motionPermission": "Allow Who Am I? to use motion so tilting your phone can mark guesses correct or passed."
-        }
-      ],
-      [
         "expo-screen-orientation",
         {
           "initialOrientation": "DEFAULT"

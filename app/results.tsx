@@ -18,7 +18,7 @@ export default function ResultsScreen() {
   const [themeError, setThemeError] = useState<string | null>(null);
   const results = useMemo(() => parseResults(params.results), [params.results]);
   const correct = results.filter((result) => result.correct);
-  const passed = results.filter((result) => !result.correct);
+  const incorrect = results.filter((result) => !result.correct);
 
   const loadTheme = useCallback(async () => {
     setTheme(null);
@@ -83,8 +83,8 @@ export default function ResultsScreen() {
           </View>
           <View style={styles.scoreDivider} />
           <View style={styles.scoreBlock}>
-            <Text style={styles.scoreValue}>{passed.length}</Text>
-            <Text style={styles.scoreLabel}>Passed</Text>
+            <Text style={styles.scoreValue}>{incorrect.length}</Text>
+            <Text style={styles.scoreLabel}>Incorrect</Text>
           </View>
         </View>
 
@@ -97,9 +97,9 @@ export default function ResultsScreen() {
         />
         <ResultSection
           color={palette.danger}
-          emptyMessage="Perfect — you didn't pass on any!"
+          emptyMessage="Perfect — no incorrect guesses!"
           icon="close"
-          results={passed}
+          results={incorrect}
           title="Not this time"
         />
 
