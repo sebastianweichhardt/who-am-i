@@ -27,9 +27,11 @@ type GamePhase = "ready" | "countdown" | "playing" | "finished";
 type MotionStatus = "idle" | "active" | "denied" | "unavailable";
 
 const ROUND_SECONDS = 60;
-const TILT_THRESHOLD = 0.55;
-const NEUTRAL_THRESHOLD = 0.22;
-const ACTION_COOLDOWN_MS = 900;
+const TILT_THRESHOLD = 0.3;
+const EARLY_TILT_THRESHOLD = 0.16;
+const TILT_RATE_THRESHOLD = 25;
+const NEUTRAL_THRESHOLD = 0.12;
+const ACTION_COOLDOWN_MS = 350;
 
 export default function GameScreen() {
   const { theme: themeParam } = useLocalSearchParams<{ theme?: string }>();
@@ -122,8 +124,9 @@ export default function GameScreen() {
   );
 
   const handleMotion = useCallback(
-    ({ orientation, rotation }: DeviceMotionMeasurement) => {
-      const axis = Math.abs(orientation) === 90 ? rotation?.gamma : rotation?.beta;
+    ({ orientation, rotation, rotationRate }: DeviceMotionMeasurement) => {
+      const isLandscape = Math.abs(orientation) === 90;
+      const axis = isLandscape ? rotation?.beta : rotation?.gamma;
       if (typeof axis !== "number") return;
 
       if (phaseRef.current === "countdown") {
@@ -138,14 +141,29 @@ export default function GameScreen() {
       if (baselineRef.current === null) baselineRef.current = axis;
 
       const rawTilt = axis - (baselineRef.current ?? axis);
-      const tilt = orientation === 90 ? -rawTilt : rawTilt;
+      const direction = orientation === 90 ? -1 : 1;
+      const tilt = rawTilt * direction;
+      const rawRate = isLandscape ? rotationRate?.beta : rotationRate?.gamma;
+      const tiltRate = (rawRate ?? 0) * direction;
+
       if (!armedRef.current) {
         if (Math.abs(tilt) < NEUTRAL_THRESHOLD) armedRef.current = true;
         return;
       }
 
-      if (tilt > TILT_THRESHOLD) registerGuess(true);
-      if (tilt < -TILT_THRESHOLD) registerGuess(false);
+      if (Math.abs(tilt) < NEUTRAL_THRESHOLD && baselineRef.current !== null) {
+        baselineRef.current = baselineRef.current * 0.98 + axis * 0.02;
+      }
+
+      const tiltedRight =
+        tilt > TILT_THRESHOLD ||
+        (tilt > EARLY_TILT_THRESHOLD && tiltRate > TILT_RATE_THRESHOLD);
+      const tiltedLeft =
+        tilt < -TILT_THRESHOLD ||
+        (tilt < -EARLY_TILT_THRESHOLD && tiltRate < -TILT_RATE_THRESHOLD);
+
+      if (tiltedRight) registerGuess(true);
+      if (tiltedLeft) registerGuess(false);
     },
     [registerGuess],
   );
@@ -165,7 +183,9 @@ export default function GameScreen() {
         if (!permission.granted) {
           setMotionStatus("denied");
         } else {
-          if (Platform.OS !== "web") DeviceMotion.setUpdateInterval(200);
+          if (Platform.OS !== "web") {
+            DeviceMotion.setUpdateInterval(Platform.OS === "android" ? 200 : 100);
+          }
           subscriptionRef.current?.remove();
           subscriptionRef.current = DeviceMotion.addListener(handleMotion);
           setMotionStatus("active");
@@ -184,7 +204,7 @@ export default function GameScreen() {
     const interval = setInterval(() => {
       setCountdown((value) => {
         if (value <= 1) {
-          lastActionRef.current = Date.now();
+          lastActionRef.current = 0;
           setGamePhase("playing");
           return 0;
         }
@@ -255,14 +275,14 @@ export default function GameScreen() {
               <Instruction
                 color={palette.ink}
                 icon="rotate-3d-variant"
-                label="Tilt forward"
+                label="Tilt right"
                 value="Got it"
               />
               <View style={styles.instructionDivider} />
               <Instruction
                 color={palette.ink}
                 icon="rotate-3d-variant"
-                label="Tilt backward"
+                label="Tilt left"
                 value="Pass"
               />
             </View>
@@ -342,7 +362,6 @@ export default function GameScreen() {
             />
             <View style={[styles.stackCard, styles.stackCardMiddle]} />
             <View style={styles.promptCard}>
-              <View style={[styles.themeBar, { backgroundColor: theme.color }]} />
               <View style={styles.promptCountPill}>
                 <Text style={styles.promptCountText}>
                   {currentIndex + 1} / {theme.prompts.length}
@@ -358,46 +377,17 @@ export default function GameScreen() {
 
           <View style={styles.tiltHints}>
             <View style={styles.tiltHint}>
-              <MaterialCommunityIcons color={palette.ink} name="arrow-down" size={17} />
-              <Text style={styles.tiltHintText}>Forward = correct</Text>
+              <MaterialCommunityIcons color={palette.ink} name="arrow-right" size={17} />
+              <Text style={styles.tiltHintText}>Right = correct</Text>
             </View>
             <View style={styles.tiltHint}>
-              <MaterialCommunityIcons color={palette.ink} name="arrow-up" size={17} />
-              <Text style={styles.tiltHintText}>Back = pass</Text>
+              <MaterialCommunityIcons color={palette.ink} name="arrow-left" size={17} />
+              <Text style={styles.tiltHintText}>Left = pass</Text>
             </View>
           </View>
-        </View>
-
-        <View style={styles.controls}>
-          <Pressable
-            accessibilityLabel="Pass"
-            accessibilityRole="button"
-            onPress={() => registerGuess(false)}
-            style={({ pressed }) => [
-              styles.controlButton,
-              styles.passButton,
-              pressed && styles.buttonPressed,
-            ]}
-          >
-            <MaterialCommunityIcons color={palette.ink} name="close" size={23} />
-            <Text style={[styles.controlText, styles.passText]}>Pass</Text>
-          </Pressable>
-          <Pressable
-            accessibilityLabel="Correct"
-            accessibilityRole="button"
-            onPress={() => registerGuess(true)}
-            style={({ pressed }) => [
-              styles.controlButton,
-              styles.correctButton,
-              pressed && styles.buttonPressed,
-            ]}
-          >
-            <MaterialCommunityIcons color="#FFFFFF" name="check" size={23} />
-            <Text style={[styles.controlText, styles.correctText]}>Correct</Text>
-          </Pressable>
           {motionStatus !== "active" && (
             <Text style={styles.motionFallback}>
-              Tilt unavailable — use buttons
+              Tilt controls unavailable on this device
             </Text>
           )}
         </View>
@@ -659,13 +649,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flex: 1,
     justifyContent: "center",
+    maxWidth: 680,
+    width: "100%",
   },
   playArea: {
+    alignItems: "center",
     flex: 1,
-    flexDirection: "row",
-    gap: 18,
+    justifyContent: "center",
     paddingBottom: 10,
-    paddingHorizontal: 20,
+    paddingHorizontal: 48,
     paddingTop: 4,
   },
   deckLabel: {
@@ -675,8 +667,8 @@ const styles = StyleSheet.create({
     marginBottom: 7,
   },
   cardStack: {
-    height: 210,
-    maxWidth: 520,
+    height: 224,
+    maxWidth: 620,
     width: "100%",
   },
   stackCard: {
@@ -708,14 +700,6 @@ const styles = StyleSheet.create({
     padding: 28,
     position: "absolute",
     right: 0,
-    top: 0,
-  },
-  themeBar: {
-    borderRadius: 2,
-    height: 4,
-    left: 22,
-    position: "absolute",
-    right: 22,
     top: 0,
   },
   promptCountPill: {
@@ -764,46 +748,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "400",
   },
-  controls: {
-    alignSelf: "stretch",
-    gap: 10,
-    justifyContent: "center",
-    paddingLeft: 2,
-    width: 150,
-  },
-  controlButton: {
-    alignItems: "center",
-    borderRadius: 14,
-    flexDirection: "row",
-    gap: 8,
-    justifyContent: "center",
-    minHeight: 62,
-    width: "100%",
-  },
-  passButton: {
-    backgroundColor: palette.surface,
-    borderColor: palette.borderStrong,
-    borderWidth: 1,
-  },
-  correctButton: {
-    backgroundColor: palette.ink,
-  },
-  controlText: {
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  passText: {
-    color: palette.ink,
-  },
-  correctText: {
-    color: "#FFFFFF",
-  },
   motionFallback: {
     color: palette.subtle,
     fontSize: 10,
     fontWeight: "400",
     lineHeight: 13,
-    paddingTop: 2,
+    paddingTop: 8,
     textAlign: "center",
   },
 });
