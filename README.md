@@ -25,8 +25,11 @@ read-only policy.
    `supabase/migrations/202608240001_create_themes.sql`. This creates the
    `themes` and `theme_prompts` tables, enables row-level security, and imports
    the starter catalog.
-2. Copy `.env.example` to `.env.local`.
-3. In the Supabase dashboard, open the project Connect dialog and add the
+2. Run `supabase/migrations/202608240002_create_custom_themes.sql`. This adds
+   private, user-owned custom themes and entries, row-level security policies,
+   and the atomic function used by the creation screen.
+3. Copy `.env.example` to `.env.local`.
+4. In the Supabase dashboard, open the project Connect dialog and add the
    project URL and publishable key to `.env.local`:
 
    ```dotenv
@@ -34,7 +37,7 @@ read-only policy.
    EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your_key
    ```
 
-4. Reload Expo Go after starting Metro with `npx expo start --clear`.
+5. Reload Expo Go after starting Metro with `npx expo start --clear`.
 
 Never put a Supabase secret key or legacy `service_role` key in an
 `EXPO_PUBLIC_` variable. The publishable key is intended for client apps; data

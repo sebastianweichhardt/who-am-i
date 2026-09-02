@@ -1,8 +1,8 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import type { Href } from "expo-router";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -16,15 +16,25 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import Card from "@/components/card";
 import { palette } from "@/constants/palette";
-import { fetchThemes, GameTheme } from "@/data/themes";
+import {
+  fetchCustomThemes,
+  fetchThemes,
+  GameTheme,
+} from "@/data/themes";
 import { useAuth } from "@/providers/auth-provider";
 
 export default function Index() {
   const router = useRouter();
   const { session } = useAuth();
+  const userId = session?.user.id;
+  const customRequestRef = useRef(0);
   const [themes, setThemes] = useState<GameTheme[]>([]);
+  const [customThemes, setCustomThemes] = useState<GameTheme[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isCustomLoading, setIsCustomLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [customErrorMessage, setCustomErrorMessage] = useState<string | null>(null);
 
   const loadThemes = useCallback(async (forceRefresh = false) => {
     setIsLoading(true);
@@ -41,9 +51,60 @@ export default function Index() {
     }
   }, []);
 
+  const loadCustomThemes = useCallback(
+    async (forceRefresh = false) => {
+      const requestId = ++customRequestRef.current;
+
+      if (!userId) {
+        setCustomThemes([]);
+        setCustomErrorMessage(null);
+        setIsCustomLoading(false);
+        return;
+      }
+
+      setIsCustomLoading(true);
+      setCustomErrorMessage(null);
+
+      try {
+        const nextThemes = await fetchCustomThemes(userId, forceRefresh);
+        if (requestId === customRequestRef.current) {
+          setCustomThemes(nextThemes);
+        }
+      } catch (error) {
+        if (requestId === customRequestRef.current) {
+          setCustomErrorMessage(
+            error instanceof Error
+              ? error.message
+              : "Unable to load custom themes.",
+          );
+        }
+      } finally {
+        if (requestId === customRequestRef.current) {
+          setIsCustomLoading(false);
+        }
+      }
+    },
+    [userId],
+  );
+
+  const refreshThemes = useCallback(async () => {
+    setIsRefreshing(true);
+    await Promise.allSettled([
+      loadThemes(true),
+      loadCustomThemes(true),
+    ]);
+    setIsRefreshing(false);
+  }, [loadCustomThemes, loadThemes]);
+
   useEffect(() => {
     void loadThemes();
   }, [loadThemes]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadCustomThemes();
+    }, [loadCustomThemes]),
+  );
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safeArea}>
@@ -53,8 +114,8 @@ export default function Index() {
         refreshControl={
           <RefreshControl
             colors={[palette.ink]}
-            onRefresh={() => void loadThemes(true)}
-            refreshing={isLoading && themes.length > 0}
+            onRefresh={() => void refreshThemes()}
+            refreshing={isRefreshing}
             tintColor={palette.ink}
           />
         }
@@ -87,7 +148,7 @@ export default function Index() {
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Choose a theme</Text>
+          <Text style={styles.sectionTitle}>Official Themes</Text>
         </View>
 
         {isLoading && themes.length === 0 ? (
@@ -131,9 +192,50 @@ export default function Index() {
                 theme={theme}
               />
             ))}
-            <CreateThemePlaceholder />
           </View>
         )}
+
+        <View style={[styles.sectionHeader, styles.customSectionHeader]}>
+          <Text style={styles.sectionTitle}>Custom Themes</Text>
+        </View>
+
+        <View style={styles.grid}>
+          {isCustomLoading && customThemes.length === 0 ? (
+            <View style={styles.customLoadingState}>
+              <ActivityIndicator color={palette.ink} size="small" />
+            </View>
+          ) : (
+            customThemes.map((theme) => (
+              <Card
+                key={theme.id}
+                onPress={() =>
+                  router.push({
+                    pathname: "/game",
+                    params: { theme: theme.id },
+                  } as unknown as Href)
+                }
+                theme={theme}
+              />
+            ))
+          )}
+
+          {customErrorMessage && (
+            <View style={styles.customErrorCard}>
+              <Text style={styles.customErrorText}>{customErrorMessage}</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void loadCustomThemes(true)}
+              >
+                <Text style={styles.customRetryText}>Try again</Text>
+              </Pressable>
+            </View>
+          )}
+
+          <CreateThemePlaceholder
+            isSignedIn={Boolean(session)}
+            onPress={() => router.push("/create-theme" as Href)}
+          />
+        </View>
 
         <Text style={styles.tipText}>Best with two or more players.</Text>
       </ScrollView>
@@ -141,20 +243,36 @@ export default function Index() {
   );
 }
 
-function CreateThemePlaceholder() {
+function CreateThemePlaceholder({
+  isSignedIn,
+  onPress,
+}: {
+  isSignedIn: boolean;
+  onPress: () => void;
+}) {
   return (
-    <View
-      accessibilityLabel="Create your own theme, coming soon"
-      style={styles.createCard}
+    <Pressable
+      accessibilityLabel="Create a custom theme"
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.createCard,
+        pressed && styles.createCardPressed,
+      ]}
     >
       <View style={styles.createIcon}>
         <MaterialCommunityIcons color={palette.ink} name="plus" size={23} />
       </View>
       <View style={styles.createCopy}>
         <Text style={styles.createTitle}>Create your own</Text>
-        <Text style={styles.createDescription}>Custom themes coming soon</Text>
+        <Text style={styles.createDescription}>
+          {isSignedIn
+            ? "Add a theme and your own entries"
+            : "Sign in to save a custom theme"}
+        </Text>
       </View>
-    </View>
+      <MaterialCommunityIcons color={palette.subtle} name="chevron-right" size={20} />
+    </Pressable>
   );
 }
 
@@ -211,6 +329,9 @@ const styles = StyleSheet.create({
   sectionHeader: {
     marginBottom: 12,
   },
+  customSectionHeader: {
+    marginTop: 30,
+  },
   sectionTitle: {
     color: palette.ink,
     fontSize: 16,
@@ -229,6 +350,10 @@ const styles = StyleSheet.create({
     minHeight: 82,
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+  createCardPressed: {
+    opacity: 0.72,
+    transform: [{ scale: 0.985 }],
   },
   createIcon: {
     alignItems: "center",
@@ -254,6 +379,31 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "400",
     marginTop: 4,
+  },
+  customLoadingState: {
+    alignItems: "center",
+    minHeight: 82,
+    justifyContent: "center",
+  },
+  customErrorCard: {
+    alignItems: "center",
+    backgroundColor: palette.surface,
+    borderColor: palette.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 8,
+    padding: 14,
+  },
+  customErrorText: {
+    color: palette.muted,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: "center",
+  },
+  customRetryText: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: "600",
   },
   stateCard: {
     alignItems: "center",
